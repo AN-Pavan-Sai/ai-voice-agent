@@ -2,7 +2,7 @@
 
 A real-time, multilingual healthcare voice assistant capable of dynamic conversations, appointment scheduling, and answering medical queries. This project is engineered for ultra-low latency (< 450ms) and utilizes a modern glassmorphic web interface.
 
-## 🚀 Architecture
+## Architecture
 
 The application is split into a React frontend and a FastAPI backend communicating entirely over WebSockets to maintain a persistent, bidirectional, low-latency connection.
 
@@ -37,7 +37,7 @@ sequenceDiagram
     Backend (FastAPI)->>Frontend (React): Sends {"type": "done"}
 ```
 
-## 🧠 Implementation Details
+## Implementation Details
 
 ### 1. Frontend (React + Vite)
 - **Voice Activity Detection (VAD):** The frontend implements a custom Web Audio API-based VAD inside `useAudioRecorder.ts`. It continuously monitors microphone frequencies. Once the user stops speaking (silence detected), the audio chunk is instantly packaged as a WebM blob and sent to the backend. This prevents the "push-to-talk" bottleneck.
@@ -49,7 +49,7 @@ sequenceDiagram
 - **Sarvam AI (Speech-to-Text):** The audio blob is forwarded to Sarvam AI (`stt.py`). The transcript is sanitized with strict length and alphabetical filters to prevent empty "hallucinations" caused by background noise.
 - **Groq Llama 3 (LLM):** The backend maintains conversation history and calls the Groq API (`llm.py`) with `stream=True` using the `llama-3.3-70b-versatile` model. The temperature is set to `0.7` for dynamic, empathetic, and human-like interactions.
 
-## 🛠 Setup & Running
+## Setup & Running
 
 ### Prerequisites
 - Node.js (v18+)
