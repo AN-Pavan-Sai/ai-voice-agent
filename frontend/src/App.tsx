@@ -1,177 +1,173 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useRef, useState, useCallback } from "react";
+import { Mic, Square, Activity } from "lucide-react";
+import { useAudioRecorder } from "./hooks/useAudioRecorder";
+import "./index.css";
+
+type Message = {
+  id: string;
+  sender: "user" | "ai";
+  text: string;
+};
 
 function App() {
-
-  const [messages, setMessages] = useState<string[]>([]);
-
+  const [messages, setMessages] = useState<Message[]>([]);
   const [recording, setRecording] = useState(false);
-
+  const [isConnected, setIsConnected] = useState(false);
   const wsRef = useRef<WebSocket | null>(null);
+  
+  // Ref to hold the current AI message being streamed
+  const currentAiMessageIdRef = useRef<string | null>(null);
+  const sentenceBufferRef = useRef<string>("");
+  
+  const onSilenceDetected = useCallback(async (blob: Blob) => {
+    if (wsRef.current && wsRef.current.readyState === WebSocket.OPEN) {
+      const arrayBuffer = await blob.arrayBuffer();
+      wsRef.current.send(arrayBuffer);
+    }
+  }, []);
 
-  const mediaRecorderRef =
-    useRef<MediaRecorder | null>(null);
-
-  const chunksRef = useRef<Blob[]>([]);
+  const { startRecording: startRecorder, stopRecording: stopRecorder } = useAudioRecorder(onSilenceDetected);
 
   useEffect(() => {
-
-    const ws = new WebSocket(
-      "ws://127.0.0.1:8000/ws"
-    );
+    const ws = new WebSocket("ws://127.0.0.1:8000/ws");
 
     ws.onopen = () => {
-      console.log("Connected");
+      setIsConnected(true);
+      console.log("Connected to backend");
+    };
+
+    ws.onclose = () => {
+      setIsConnected(false);
+      console.log("Disconnected from backend");
     };
 
     ws.onmessage = (event) => {
-
-      const aiText = event.data;
-
-      setMessages(prev => [
-        ...prev,
-        `AI: ${aiText}`
-      ]);
-
-      // Browser TTS
-      const speech =
-        new SpeechSynthesisUtterance(aiText);
-
-      speech.lang = "en-US";
-
-      window.speechSynthesis.speak(speech);
+      try {
+        const data = JSON.parse(event.data);
+        
+        if (data.type === "user") {
+          // Received user transcript from STT
+          setMessages(prev => [...prev, { id: Date.now().toString(), sender: "user", text: data.text }]);
+          // Reset AI message tracker for the new turn
+          currentAiMessageIdRef.current = null;
+          sentenceBufferRef.current = "";
+        } 
+        else if (data.type === "token") {
+          // Received a chunk of AI response
+          const token = data.text;
+          sentenceBufferRef.current += token;
+          
+          if (!currentAiMessageIdRef.current) {
+            // Create a new AI message
+            const newId = Date.now().toString();
+            currentAiMessageIdRef.current = newId;
+            setMessages(prev => [...prev, { id: newId, sender: "ai", text: token }]);
+          } else {
+            // Append to existing AI message
+            const id = currentAiMessageIdRef.current;
+            setMessages(prev => prev.map(msg => 
+              msg.id === id ? { ...msg, text: msg.text + token } : msg
+            ));
+          }
+          
+          // Check for sentence boundaries to trigger TTS incrementally
+          const match = sentenceBufferRef.current.match(/([^.!?]+[.!?]+)(.*)/);
+          if (match) {
+            const sentence = match[1].trim();
+            const remainder = match[2];
+            sentenceBufferRef.current = remainder;
+            
+            if (sentence) {
+              const speech = new SpeechSynthesisUtterance(sentence);
+              speech.lang = "en-IN"; // matching Sarvam's target language
+              window.speechSynthesis.speak(speech);
+            }
+          }
+        }
+        else if (data.type === "done") {
+          // Speak any remaining text that didn't end with punctuation
+          const remaining = sentenceBufferRef.current.trim();
+          if (remaining) {
+            const speech = new SpeechSynthesisUtterance(remaining);
+            speech.lang = "en-IN";
+            window.speechSynthesis.speak(speech);
+            sentenceBufferRef.current = "";
+          }
+        }
+      } catch (err) {
+        console.error("Failed to parse websocket message", err);
+      }
     };
 
     wsRef.current = ws;
 
-    return () => ws.close();
-
+    return () => {
+      ws.close();
+      window.speechSynthesis.cancel();
+    };
   }, []);
 
-  const startRecording = async () => {
-
-    const stream =
-      await navigator.mediaDevices.getUserMedia({
-        audio: true
-      });
-
-    const mediaRecorder =
-      new MediaRecorder(stream, {
-        mimeType: "audio/webm"
-      });
-
-    mediaRecorderRef.current =
-      mediaRecorder;
-
-    chunksRef.current = [];
-
-    mediaRecorder.ondataavailable =
-      (event) => {
-
-        if (event.data.size > 0) {
-
-          chunksRef.current.push(event.data);
-        }
-      };
-
-    // Every 5 sec create COMPLETE webm
-    mediaRecorder.onstop = async () => {
-
-      const blob = new Blob(
-        chunksRef.current,
-        {
-          type: "audio/webm"
-        }
-      );
-
-      const arrayBuffer =
-        await blob.arrayBuffer();
-
-      if (
-        wsRef.current &&
-        wsRef.current.readyState === WebSocket.OPEN
-      ) {
-
-        wsRef.current.send(arrayBuffer);
-
-        console.log("Sent complete audio");
-      }
-
-      chunksRef.current = [];
-
-      // Restart automatically
-      if (recording) {
-
-        mediaRecorder.start();
-
-        setTimeout(() => {
-          mediaRecorder.stop();
-        }, 5000);
-      }
-    };
-
+  const handleStart = async () => {
     setRecording(true);
-
-    mediaRecorder.start();
-
-    setTimeout(() => {
-      mediaRecorder.stop();
-    }, 5000);
+    await startRecorder();
   };
 
-  const stopRecording = () => {
-
+  const handleStop = () => {
     setRecording(false);
-
-    mediaRecorderRef.current?.stop();
+    stopRecorder();
   };
 
   return (
-    <div
-      style={{
-        background: "#0f172a",
-        minHeight: "100vh",
-        color: "white",
-        padding: "40px",
-        textAlign: "center"
-      }}
-    >
+    <div className="app-container">
+      <div className="glass-panel main-panel">
+        <header className="header">
+          <div className="status-indicator">
+            <span className={`status-dot ${isConnected ? "connected" : "disconnected"}`}></span>
+            <span className="status-text">{isConnected ? "System Online" : "Connecting..."}</span>
+          </div>
+          <h1 className="title">Medical AI Assistant</h1>
+          <p className="subtitle">Powered by Sarvam AI & Groq Llama</p>
+        </header>
 
-      <h1
-        style={{
-          fontSize: "60px"
-        }}
-      >
-        Multilingual Voice Agent
-      </h1>
+        <div className="chat-container">
+          {messages.length === 0 ? (
+            <div className="empty-state">
+              <Activity className="empty-icon" />
+              <p>Start speaking to consult with the medical assistant.</p>
+            </div>
+          ) : (
+            messages.map((msg) => (
+              <div key={msg.id} className={`message-wrapper ${msg.sender}`}>
+                <div className="message-bubble">
+                  {msg.text}
+                </div>
+              </div>
+            ))
+          )}
+        </div>
 
-      {
-        !recording ? (
-          <button onClick={startRecording}>
-            Start Talking
-          </button>
-        ) : (
-          <button onClick={stopRecording}>
-            Stop Talking
-          </button>
-        )
-      }
-
-      <div
-        style={{
-          marginTop: "40px"
-        }}
-      >
-
-        {
-          messages.map((msg, i) => (
-            <p key={i}>
-              {msg}
-            </p>
-          ))
-        }
-
+        <div className="controls">
+          {!recording ? (
+            <button className="control-btn start-btn" onClick={handleStart} disabled={!isConnected}>
+              <Mic className="btn-icon" />
+              Start Consultation
+            </button>
+          ) : (
+            <div className="recording-controls">
+              <div className="recording-indicator">
+                <span className="pulse-ring"></span>
+                <span className="pulse-ring delay-1"></span>
+                <Mic className="recording-icon" />
+                <span>Listening...</span>
+              </div>
+              <button className="control-btn stop-btn" onClick={handleStop}>
+                <Square className="btn-icon" />
+                Stop
+              </button>
+            </div>
+          )}
+        </div>
       </div>
-
     </div>
   );
 }
