@@ -1,0 +1,6 @@
+{
+  "dependencies": {
+    "mic-recorder-to-mp3": "^2.2.2",
+    "socket.io-client": "^4.8.3"
+  }
+}
