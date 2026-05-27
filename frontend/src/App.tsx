@@ -29,7 +29,15 @@ function App() {
   const { startRecording: startRecorder, stopRecording: stopRecorder } = useAudioRecorder(onSilenceDetected);
 
   useEffect(() => {
-    const wsUrl = import.meta.env.VITE_WS_URL || "ws://127.0.0.1:8000/ws";
+    let wsUrl = import.meta.env.VITE_WS_URL || "ws://127.0.0.1:8000/ws";
+    
+    // Ensure the URL ends with /ws
+    if (wsUrl.endsWith('/')) {
+      wsUrl += 'ws';
+    } else if (!wsUrl.endsWith('/ws')) {
+      wsUrl += '/ws';
+    }
+    
     const ws = new WebSocket(wsUrl);
 
     ws.onopen = () => {
